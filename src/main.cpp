@@ -7,21 +7,19 @@
 #include <WiFiClient.h>
 #include <RTCZero.h>
 #include <DHT.h>
-#include <Adafruit_MQTT.h>
-#include <Adafruit_MQTT_Client.h>
-//#include <Adafruit_SleepyDog.h>
+#include <PubSubClient.h>
+#include <Adafruit_SleepyDog.h>
 #include <SPI.h>
 #include <Adafruit_Sensor.h>
 
 #define CMD_INTERVAL 500
 
-#define DHTPIN 2        // what digital pin we're connected to
-#define DHTTYPE DHT22   // DHT 11 is also possible
+#define DHTPIN 2	  // what digital pin we're connected to
+#define DHTTYPE DHT22 // DHT 11 is also possible
 
 #define TEMPERATURE_TOPIC "kitchen/sensors/temperatureout"
 #define HUMIDITY_TOPIC "kitchen/sensors/humidityout"
-
-double temperature, humidity;
+#define VOLTAGE_TOPIC "kitchen/sensors/voltageout"
 
 DHT dht(DHTPIN, DHTTYPE);
 RTCZero rtc;
@@ -34,21 +32,28 @@ const uint8 day = 1;
 const uint8 month = 1;
 const uint8 year = 17;
 
-WiFiClient wifiClient;
-Adafruit_MQTT_Client mqtt(&wifiClient, MQTT_SERVER, MQTT_SERVERPORT, MQTT_USERNAME, MQTT_PASSWORD);
-Adafruit_MQTT_Publish temperatureFeed = Adafruit_MQTT_Publish(&mqtt, TEMPERATURE_TOPIC, MQTT_QOS_0);
-Adafruit_MQTT_Publish humidityFeed = Adafruit_MQTT_Publish(&mqtt, HUMIDITY_TOPIC, MQTT_QOS_0);
+#define ANALOG_BITS 12
+#define BITS 4096
+#define VREF 3.3
+#define R1 456
+#define R2 978
 
-void getNextSample( double* Temperature,
-					double* Humidity ) {
+WiFiClient wifiClient;
+PubSubClient mqtt(wifiClient);
+
+void getNextSample(float *Temperature,
+				   float *Humidity)
+{
 	*Humidity = dht.readHumidity();
 	*Temperature = dht.readTemperature();
 }
 
-void connectWifi() {
+void connectWifi()
+{
 	Serial.print("WiFi connecting ");
 	WiFi.begin(WIFI_SSID, WIFI_PASS);
-	while (WiFi.status() != WL_CONNECTED) {
+	while (WiFi.status() != WL_CONNECTED)
+	{
 		Serial.print(".");
 		delay(CMD_INTERVAL);
 	}
@@ -56,38 +61,55 @@ void connectWifi() {
 	Serial.print(" done\r\n");
 }
 
-void disconnectWifi() {
+void disconnectWifi()
+{
 	WiFi.disconnect();
 	Serial.print("WiFi disconnecting ");
-	while (WiFi.status() == WL_CONNECTED) {
+	while (WiFi.status() == WL_CONNECTED)
+	{
 		delay(CMD_INTERVAL);
 		Serial.print(".");
 	}
 	Serial.print("done\r\n");
 }
 
-void connectMQTT() {
+void connectMQTT()
+{
 	Serial.print("MQTT connecting ");
-	if (mqtt.connected()) {
-		Serial.print("done\r\n");
-		return;
-	}
-
-	while (mqtt.connect() != 0) {
-		delay(CMD_INTERVAL);
-		Serial.print(".");
+	while (!mqtt.connected())
+	{
+		Serial.print("Attempting MQTT connection...");
+		// Attempt to connect
+		if (mqtt.connect("OutsideThermometer"))
+		{
+			Serial.println("connected");
+		}
+		else
+		{
+			Serial.print("failed, rc=");
+			Serial.print(mqtt.state());
+			Serial.println(" try again in 5 seconds");
+			// Wait 5 seconds before retrying
+			delay(5000);
+		}
 	}
 
 	Serial.print("done\r\n");
 }
 
-void disconnectMQTT() {
+void disconnectMQTT()
+{
 	mqtt.disconnect();
 	Serial.print("MQTT disconnect\r\n");
 }
 
-void setup() {
+void setup()
+{
 	Serial.begin(57600);
+
+	analogReadResolution(ANALOG_BITS);
+
+	mqtt.setServer(MQTT_SERVER, MQTT_SERVERPORT);
 
 	pinMode(6UL, OUTPUT);
 	WiFi.hostname("OutsideThermometer");
@@ -97,19 +119,13 @@ void setup() {
 	rtc.begin();
 	rtc.setTime(hours, minutes, seconds);
 	rtc.setDate(day, month, year);
-	rtc.setAlarmMinutes((rtc.getAlarmMinutes() + 1) % 60);
 	rtc.enableAlarm(rtc.MATCH_MMSS);
-
-	//rtc.standbyMode();
 }
 
-void messageReceived( 	String topic,
-						String payload,
-						char * bytes,
-						unsigned int length ) {
-}
+void work()
+{
+	float temperature, humidity;
 
-void work() {
 	digitalWrite(6UL, HIGH);
 	getNextSample(&temperature, &humidity);
 
@@ -120,32 +136,36 @@ void work() {
 	Serial.print("Temperature: ");
 	Serial.print(temperature);
 	Serial.print("\r\n");
-	//Watchdog.reset();
+	Watchdog.reset();
+
+	uint16 Vin = analogRead(A1);
+	float Vout = ((double)Vin * VREF / BITS) * (R1 + R2) / R2;
+	Serial.print("VBAT: ");
+	Serial.print(Vout);
+	Serial.print("\r\n");
 
 	connectWifi();
 	connectMQTT();
 
-	//Watchdog.reset();
+	Watchdog.reset();
+	mqtt.publish(TEMPERATURE_TOPIC, String(temperature).c_str(), true);
+	mqtt.publish(HUMIDITY_TOPIC, String(humidity).c_str(), true);
+	mqtt.publish(VOLTAGE_TOPIC, String(Vout).c_str(), true);
 
-    temperatureFeed.publish(temperature, 1);
-    humidityFeed.publish(humidity, 1);
-
-//	Watchdog.reset();
+	Watchdog.reset();
 
 	disconnectMQTT();
 	disconnectWifi();
 	digitalWrite(6, LOW);
-
-	delay(5000); // wait for the wifi to send the data
 }
 
-void loop() {
-//	digitalWrite(6UL, HIGH);
-	//Watchdog.enable(8000);
+void loop()
+{
+	Watchdog.enable(8000);
 
 	work(); // do the work
-	//rtc.setAlarmMinutes((rtc.getAlarmMinutes() + 15) % 60);
+	rtc.setAlarmMinutes((rtc.getAlarmMinutes() + SENDING_INTERVAL) % 60);
 
-	//Watchdog.disable();
-	//rtc.standbyMode();
+	Watchdog.disable();
+	rtc.standbyMode();
 }
