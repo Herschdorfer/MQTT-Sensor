@@ -1,12 +1,11 @@
-/*
- * MKR1000-DHT22-MQTT.ino
- */
+
+
 #include "config.h"
 #include <Arduino.h>
 #include <WiFi101.h>
 #include <WiFiClient.h>
 #include <RTCZero.h>
-#include <DHT.h>
+#include <Adafruit_BME280.h>
 #include <PubSubClient.h>
 #include <Adafruit_SleepyDog.h>
 #include <SPI.h>
@@ -14,14 +13,12 @@
 
 #define CMD_INTERVAL 500
 
-#define DHTPIN 2	  // what digital pin we're connected to
-#define DHTTYPE DHT22 // DHT 11 is also possible
+#define TEMPERATURE_TOPIC 	"kitchen/sensors/temperatureout"
+#define HUMIDITY_TOPIC 		"kitchen/sensors/humidityout"
+#define VOLTAGE_TOPIC 		"kitchen/sensors/voltageout"
+#define PRESSURE_TOPIC 		"kitchen/sensors/pressureout"
 
-#define TEMPERATURE_TOPIC "kitchen/sensors/temperatureout"
-#define HUMIDITY_TOPIC "kitchen/sensors/humidityout"
-#define VOLTAGE_TOPIC "kitchen/sensors/voltageout"
-
-DHT dht(DHTPIN, DHTTYPE);
+Adafruit_BME280 bme; // I2C
 RTCZero rtc;
 
 // Set some dummy data, since we just want intervals.
@@ -37,15 +34,22 @@ const uint8 year = 17;
 #define VREF 3.3
 #define R1 456
 #define R2 978
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+//#define DEBUG
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 
+unsigned long delayTime;
+
 void getNextSample(float *Temperature,
-				   float *Humidity)
+				   float *Humidity,
+				   float *Pressure)
 {
-	*Humidity = dht.readHumidity();
-	*Temperature = dht.readTemperature();
+	*Humidity    = bme.readHumidity();
+	*Temperature = bme.readTemperature();
+	*Pressure    = bme.readPressure() / 100.0F;
 }
 
 void connectWifi()
@@ -100,34 +104,41 @@ void connectMQTT()
 void disconnectMQTT()
 {
 	mqtt.disconnect();
+	while(mqtt.connected())
+	{
+		delay(CMD_INTERVAL);
+	}
 	Serial.print("MQTT disconnect\r\n");
 }
 
 void setup()
 {
-	Serial.begin(57600);
 
+    Serial.begin(9600);
+    
 	analogReadResolution(ANALOG_BITS);
 
 	mqtt.setServer(MQTT_SERVER, MQTT_SERVERPORT);
 
 	pinMode(6UL, OUTPUT);
 	WiFi.hostname("OutsideThermometer");
-	dht.begin();
+	bme.begin(&Wire);
 
 	// Set the RTC
+#ifndef DEBUG
 	rtc.begin();
 	rtc.setTime(hours, minutes, seconds);
 	rtc.setDate(day, month, year);
 	rtc.enableAlarm(rtc.MATCH_MMSS);
+#endif
 }
 
 void work()
 {
-	float temperature, humidity;
+	float temperature, humidity, pressure;
 
 	digitalWrite(6UL, HIGH);
-	getNextSample(&temperature, &humidity);
+	getNextSample(&temperature, &humidity, &pressure);
 
 	Serial.print("Humidity: ");
 	Serial.print(humidity);
@@ -135,6 +146,10 @@ void work()
 
 	Serial.print("Temperature: ");
 	Serial.print(temperature);
+	Serial.print("\r\n");
+
+	Serial.print("Pressure: ");
+	Serial.print(pressure);
 	Serial.print("\r\n");
 	Watchdog.reset();
 
@@ -148,9 +163,10 @@ void work()
 	connectMQTT();
 
 	Watchdog.reset();
-	mqtt.publish(TEMPERATURE_TOPIC, String(temperature).c_str(), true);
-	mqtt.publish(HUMIDITY_TOPIC, String(humidity).c_str(), true);
-	mqtt.publish(VOLTAGE_TOPIC, String(Vout).c_str(), true);
+	mqtt.publish(TEMPERATURE_TOPIC, String(temperature).c_str(), 	true);
+	mqtt.publish(HUMIDITY_TOPIC, 	String(humidity).c_str(), 		true);
+	mqtt.publish(VOLTAGE_TOPIC, 	String(Vout).c_str(), 			true);
+	mqtt.publish(PRESSURE_TOPIC, 	String(pressure).c_str(), 		true);
 
 	Watchdog.reset();
 
@@ -159,13 +175,18 @@ void work()
 	digitalWrite(6, LOW);
 }
 
-void loop()
-{
+void loop() {
+#ifndef DEBUG
 	Watchdog.enable(8000);
+#endif
 
 	work(); // do the work
+	
+#ifdef DEBUG
+	delay(10000);
+#else	
 	rtc.setAlarmMinutes((rtc.getAlarmMinutes() + SENDING_INTERVAL) % 60);
-
 	Watchdog.disable();
 	rtc.standbyMode();
+#endif
 }
