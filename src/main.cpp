@@ -2,14 +2,14 @@
 
 #include "config.h"
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_BME280.h>
 #include <WiFi101.h>
 #include <WiFiClient.h>
 #include <RTCZero.h>
-#include <Adafruit_BME280.h>
 #include <PubSubClient.h>
-#include <Adafruit_SleepyDog.h>
-#include <SPI.h>
 #include <Adafruit_Sensor.h>
+#include <Adafruit_SleepyDog.h>
 
 #define CMD_INTERVAL 500
 
@@ -36,7 +36,8 @@ const uint8 year = 17;
 #define R2 978
 #define SEALEVELPRESSURE_HPA (1013.25)
 
-//#define DEBUG
+#define DEBUG
+#define DEBUGDELAY 60000
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
@@ -47,9 +48,11 @@ void getNextSample(float *Temperature,
 				   float *Humidity,
 				   float *Pressure)
 {
+	bme.takeForcedMeasurement();
+	
 	*Humidity    = bme.readHumidity();
 	*Temperature = bme.readTemperature();
-	*Pressure    = bme.readPressure() / 100.0F;
+	//*Pressure    = bme.readPressure() / 100.0F;
 }
 
 void connectWifi()
@@ -62,19 +65,20 @@ void connectWifi()
 		delay(CMD_INTERVAL);
 	}
 
-	Serial.print(" done\r\n");
+	Serial.print(" connected\r\n");
 }
 
 void disconnectWifi()
 {
-	WiFi.disconnect();
 	Serial.print("WiFi disconnecting ");
+	
+	WiFi.disconnect();
 	while (WiFi.status() == WL_CONNECTED)
 	{
 		delay(CMD_INTERVAL);
 		Serial.print(".");
 	}
-	Serial.print("done\r\n");
+	Serial.print(" disconnected\r\n");
 }
 
 void connectMQTT()
@@ -82,33 +86,30 @@ void connectMQTT()
 	Serial.print("MQTT connecting ");
 	while (!mqtt.connected())
 	{
-		Serial.print("Attempting MQTT connection...");
-		// Attempt to connect
 		if (mqtt.connect("OutsideThermometer"))
 		{
-			Serial.println("connected");
+			Serial.print(" connected");
 		}
 		else
 		{
-			Serial.print("failed, rc=");
-			Serial.print(mqtt.state());
-			Serial.println(" try again in 5 seconds");
-			// Wait 5 seconds before retrying
-			delay(5000);
+			delay(CMD_INTERVAL);
+			Serial.print(".");
 		}
 	}
-
-	Serial.print("done\r\n");
+	Serial.println("");
 }
 
 void disconnectMQTT()
 {
+	Serial.print("MQTT disconnecting ");
+	
 	mqtt.disconnect();
 	while(mqtt.connected())
 	{
 		delay(CMD_INTERVAL);
+		Serial.print(".");
 	}
-	Serial.print("MQTT disconnect\r\n");
+	Serial.print(" disconnected\r\n");
 }
 
 void setup()
@@ -122,10 +123,16 @@ void setup()
 
 	pinMode(6UL, OUTPUT);
 	WiFi.hostname("OutsideThermometer");
-	bme.begin(&Wire);
+	bme.begin(0x76, &Wire);
 
-	// Set the RTC
+    bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                    Adafruit_BME280::SAMPLING_X1, // temperature
+                    Adafruit_BME280::SAMPLING_NONE, // pressure
+                    Adafruit_BME280::SAMPLING_X1, // humidity
+                    Adafruit_BME280::FILTER_OFF   );
+
 #ifndef DEBUG
+	// Set the RTC
 	rtc.begin();
 	rtc.setTime(hours, minutes, seconds);
 	rtc.setDate(day, month, year);
@@ -140,33 +147,36 @@ void work()
 	digitalWrite(6UL, HIGH);
 	getNextSample(&temperature, &humidity, &pressure);
 
-	Serial.print("Humidity: ");
+	Serial.print("Humidity: 	");
 	Serial.print(humidity);
-	Serial.print("\r\n");
+	Serial.print(" %\r\n");
 
-	Serial.print("Temperature: ");
+	Serial.print("Temperature: 	");
 	Serial.print(temperature);
-	Serial.print("\r\n");
+	Serial.print(" °C\r\n");
 
-	Serial.print("Pressure: ");
-	Serial.print(pressure);
-	Serial.print("\r\n");
+	//Serial.print("Pressure: 	");
+	//Serial.print(pressure);
+	//Serial.print(" mBar\r\n");
 	Watchdog.reset();
 
 	uint16 Vin = analogRead(A1);
 	float Vout = ((double)Vin * VREF / BITS) * (R1 + R2) / R2;
-	Serial.print("VBAT: ");
+	Serial.print("VBAT: 		");
 	Serial.print(Vout);
-	Serial.print("\r\n");
+	Serial.print(" V\r\n");
 
 	connectWifi();
 	connectMQTT();
 
 	Watchdog.reset();
+
+	Serial.print("Sending ... ");
 	mqtt.publish(TEMPERATURE_TOPIC, String(temperature).c_str(), 	true);
 	mqtt.publish(HUMIDITY_TOPIC, 	String(humidity).c_str(), 		true);
 	mqtt.publish(VOLTAGE_TOPIC, 	String(Vout).c_str(), 			true);
 	mqtt.publish(PRESSURE_TOPIC, 	String(pressure).c_str(), 		true);
+	Serial.print("done\r\n");
 
 	Watchdog.reset();
 
@@ -176,6 +186,9 @@ void work()
 }
 
 void loop() {
+
+	Serial.println("-------------------------");
+
 #ifndef DEBUG
 	Watchdog.enable(8000);
 #endif
@@ -183,7 +196,7 @@ void loop() {
 	work(); // do the work
 	
 #ifdef DEBUG
-	delay(10000);
+	delay(DEBUGDELAY);
 #else	
 	rtc.setAlarmMinutes((rtc.getAlarmMinutes() + SENDING_INTERVAL) % 60);
 	Watchdog.disable();
