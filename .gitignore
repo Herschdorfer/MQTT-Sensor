@@ -57,3 +57,7 @@ dkms.conf
 .vscode/launch.json
 /.vscode
 /.pio/*
+.settings/*
+.travis.yml
+.project
+.cproject

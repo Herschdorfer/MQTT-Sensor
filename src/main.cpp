@@ -1,30 +1,52 @@
+/* CONFIG */
+/* Debug config */
+//#define DEBUG // to enable debug
+#define DEBUGDELAY 10000 // how often to send in debug mode
 
-#define DEBUG
-#define DEBUGDELAY 10000
+/* Invall to try to disconnect/connect to WiFi/MQTT */
+#define CMD_INTERVAL 500
 
+/* The device name */
+#define DEVICE_NAME "OutsideThermometer"
+
+/* Battery voltage settings */
+/* uncomment if you use a voltage measurement on the battery */
+//#define VOLTAGE
+#define ANALOG_BITS 12
+#define BITS        4096
+#define V_REF       3.3
+#define R1          456
+#define R2          978
+#define V_BAT_IN    A1
+
+/* MQTT topics to be used */
+#define TEMPERATURE_TOPIC   "living_room/sensors/temperature"
+#define HUMIDITY_TOPIC      "living_room/sensors/humidity"
+#define VOLTAGE_TOPIC       "living_room/sensors/voltage"
+
+/* includes */
 #include "config.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
-#include <WiFi101.h>
 #include <WiFiClient.h>
 #include <PubSubClient.h>
 #include <Adafruit_Sensor.h>
 
+/* WIFI include */
+#ifdef ARDUINO_SAMD_MKR1000
+#include <WiFi101.h>
+#elif defined(ARDUINO_SAMD_MKRWIFI1010)
+#include <WiFiNINA.h>
+#else
+#error "target unknown"
+#endif
+
+/* includes not used in debug mode */
 #ifndef DEBUG
 #include <RTCZero.h>
 #include <Adafruit_SleepyDog.h>
 #endif
-
-#define CMD_INTERVAL 500
-
-#define DEVICE_NAME "OutsideThermometer"
-
-//#define VOLTAGE
-
-#define TEMPERATURE_TOPIC   "living_room/sensors/temperatureout"
-#define HUMIDITY_TOPIC      "living_room/sensors/humidityout"
-#define VOLTAGE_TOPIC       "living_room/sensors/voltageout"
 
 Adafruit_BME280 bme; // I2C
 
@@ -33,18 +55,12 @@ RTCZero rtc;
 #endif
 
 // Set some dummy data, since we just want intervals.
-const uint8 seconds = 0;
-const uint8 minutes = 0;
-const uint8 hours   = 0;
-const uint8 day     = 1;
-const uint8 month   = 1;
-const uint8 year    = 17;
-
-#define ANALOG_BITS 12
-#define BITS        4096
-#define VREF        3.3
-#define R1          456
-#define R2          978
+const uint8_t seconds = 0;
+const uint8_t minutes = 0;
+const uint8_t hours   = 0;
+const uint8_t day     = 1;
+const uint8_t month   = 1;
+const uint8_t year    = 17;
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
@@ -127,7 +143,13 @@ void setup()
   mqtt.setServer(MQTT_SERVER, MQTT_SERVERPORT);
 
   pinMode(6UL, OUTPUT);
-  WiFi.hostname("OutsideThermometer");
+#ifdef ARDUINO_SAMD_MKR1000
+  WiFi.hostname(DEVICE_NAME);
+#elif defined(ARDUINO_SAMD_MKRWIFI1010)
+  WiFi.setHostname(DEVICE_NAME);
+#else
+#error "target unknown"
+#endif  
   bme.begin(0x76, &Wire);
 
   bme.setSampling(Adafruit_BME280::MODE_FORCED,
@@ -161,8 +183,8 @@ void work()
   Serial.print(" °C\r\n");
 
 #ifdef VOLTAGE
-  uint16 Vin = analogRead(A1);
-  float Vout = ((double)Vin * VREF / BITS) * (R1 + R2) / R2;
+  uint16_t Vin = analogRead(V_BAT_IN);
+  float Vout = ((double)Vin * V_REF / BITS) * (R1 + R2) / R2;
   Serial.print("VBAT:     ");
   Serial.print(Vout);
   Serial.print(" V\r\n");
