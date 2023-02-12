@@ -11,7 +11,7 @@
 
 /* Battery voltage settings */
 /* uncomment if you use a voltage measurement on the battery */
-//#define VOLTAGE
+#define VOLTAGE
 #define ANALOG_BITS 12
 #define BITS        4096
 #define V_REF       3.3
@@ -20,13 +20,12 @@
 #define V_BAT_IN    A1
 
 /* MQTT topics to be used */
-#define TEMPERATURE_TOPIC   "living_room/sensors/temperature"
-#define HUMIDITY_TOPIC      "living_room/sensors/humidity"
-#define VOLTAGE_TOPIC       "living_room/sensors/voltage"
+#define TEMPERATURE_TOPIC   "outside/sensors/temperature"
+#define HUMIDITY_TOPIC      "outside/sensors/humidity"
+#define VOLTAGE_TOPIC       "outside/sensors/voltage"
 
 /* includes */
 #include "config.h"
-#include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 #include <WiFiClient.h>
@@ -48,10 +47,10 @@
 #include <Adafruit_SleepyDog.h>
 #endif
 
-Adafruit_BME280 bme; // I2C
+static Adafruit_BME280 bme; // I2C
 
 #ifndef DEBUG
-RTCZero rtc;
+static RTCZero rtc;
 #endif
 
 // Set some dummy data, since we just want intervals.
@@ -62,10 +61,8 @@ const uint8_t day     = 1;
 const uint8_t month   = 1;
 const uint8_t year    = 17;
 
-WiFiClient wifiClient;
+WiFiClient   wifiClient;
 PubSubClient mqtt(wifiClient);
-
-unsigned long delayTime;
 
 void getNextSample(float *Temperature,
                    float *Humidity)
@@ -149,7 +146,7 @@ void setup()
   WiFi.setHostname(DEVICE_NAME);
 #else
 #error "target unknown"
-#endif  
+#endif
   bme.begin(0x76, &Wire);
 
   bme.setSampling(Adafruit_BME280::MODE_FORCED,
