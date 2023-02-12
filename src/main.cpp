@@ -156,17 +156,6 @@ void setup()
                   Adafruit_BME280::FILTER_OFF   );
 
 #ifndef DEBUG
-  // Set the RTC
-  rtc.begin();
-  rtc.setTime(hours, minutes, seconds);
-  rtc.setDate(day, month, year);
-  rtc.enableAlarm(rtc.MATCH_MMSS);
-#endif
-}
-
-void work()
-{
-  float temperature, humidity;
 
   digitalWrite(6UL, HIGH);
   getNextSample(&temperature, &humidity);
